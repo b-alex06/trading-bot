@@ -833,6 +833,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 PRO Signal Bot v4.0 actief!\n\n"
         "Commando's:\n"
         "/analyse EURUSD — Analyseer een pair\n"
+        "/best — Beste setup op dit moment\n"
         "/pairs — Alle actieve pairs\n"
         "/score — Huidige score per pair\n"
         "/stats — Bot statistieken\n"
@@ -1136,6 +1137,62 @@ def run_scheduler(bot: Bot, loop):
         time.sleep(60)
 
 # ================================================================
+# /best COMMANDO — Scant alle pairs en geeft beste setup
+# ================================================================
+async def cmd_best(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔍 Scanning alle 27 pairs... even geduld! (±1 min)")
+    
+    results = []
+    
+    for pair, ticker_symbol in PAIRS.items():
+        try:
+            ticker = yf.Ticker(ticker_symbol)
+            df     = ticker.history(period="6mo", interval="4h")
+            if len(df) < 50:
+                continue
+            ta       = TechnicalAnalysis(pair, df)
+            analysis = ta.full_analysis()
+            buy_s    = analysis['buy_score']
+            sell_s   = analysis['sell_score']
+            best_s   = max(buy_s, sell_s)
+            best_dir = "BUY 🟢" if buy_s >= sell_s else "SELL 🔴"
+            results.append((pair, best_dir, best_s, analysis))
+        except:
+            continue
+        await asyncio.sleep(0.5)
+    
+    if not results:
+        await update.message.reply_text("❌ Geen data beschikbaar op dit moment.")
+        return
+    
+    # Sorteer op score
+    results.sort(key=lambda x: x[2], reverse=True)
+    top5 = results[:5]
+    
+    msg = "🏆 TOP 5 BESTE SETUPS NU\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━\n"
+    for i, (pair, direction, score, _) in enumerate(top5):
+        stars = "⭐" * score
+        msg += f"{i+1}. {pair} {direction} — {score}/11 {stars}\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━\n"
+    msg += f"💡 Gebruik /analyse {top5[0][0]} voor details!"
+    
+    await update.message.reply_text(msg)
+    
+    # Stuur automatisch chart van de beste
+    best_pair, best_dir, best_score, best_analysis = top5[0]
+    direction = "BUY" if "BUY" in best_dir else "SELL"
+    ticker = yf.Ticker(PAIRS[best_pair])
+    df     = ticker.history(period="6mo", interval="4h")
+    chart  = generate_chart(best_pair, df, best_analysis, direction)
+    with open(chart, 'rb') as f:
+        await update.message.reply_photo(
+            photo=f,
+            caption=f"📈 {best_pair} — Beste setup nu! Score {best_score}/11"
+        )
+    os.remove(chart)
+
+# ================================================================
 # MAIN
 # ================================================================
 async def main():
@@ -1151,6 +1208,7 @@ async def main():
     app.add_handler(CommandHandler("pairs",   cmd_pairs))
     app.add_handler(CommandHandler("stats",   cmd_stats))
     app.add_handler(CommandHandler("report",  cmd_report))
+    app.add_handler(CommandHandler("best",    cmd_best))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     bot  = app.bot
@@ -1163,7 +1221,7 @@ async def main():
     print("✅ Bot actief! Wachtend op signalen en berichten...")
     await app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if __name__ == "__main__":
+if name == "main":
     import nest_asyncio
     nest_asyncio.apply()
-    asyncio.run(main())
+    asyncio.run(main())**
