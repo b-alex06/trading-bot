@@ -1221,7 +1221,7 @@ async def main():
     print("✅ Bot actief! Wachtend op signalen en berichten...")
     await app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if name == "main":
+if __name__ == "__main__":
     import nest_asyncio
     nest_asyncio.apply()
     asyncio.run(main())
