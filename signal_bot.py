@@ -1224,4 +1224,4 @@ async def main():
 if name == "main":
     import nest_asyncio
     nest_asyncio.apply()
-    asyncio.run(main())**
+    asyncio.run(main())
