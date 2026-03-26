@@ -37,29 +37,114 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # ================================================================
 # CONFIGURATIE — VUL DIT IN
 # ================================================================
-TELEGRAM_TOKEN  = "8279417890:AAEJbzidoCwH8UDlu7_B3bpAyDNA9d8rzpg"
+TELEGRAM_TOKEN   = "8279417890:AAEJbzidoCwH8UDlu7_B3bpAyDNA9d8rzpg"
 TELEGRAM_CHAT_ID = "5821649428"
-NEWS_API_KEY    = "1c9882779b344175bf8776ed76d16ef1"   # Gratis op newsapi.org
+NEWS_API_KEY     = "1c9882779b344175bf8776ed76d16ef1"
 
 # ================================================================
-# PAIRS MAPPING (Yahoo Finance symbolen)
+# PAIRS — type per pair
 # ================================================================
 PAIRS = {
     # Forex
-    "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "USDJPY=X",
-    "USDCAD": "USDCAD=X", "AUDUSD": "AUDUSD=X", "NZDUSD": "NZDUSD=X",
-    "USDCHF": "USDCHF=X", "GBPJPY": "GBPJPY=X", "GBPAUD": "GBPAUD=X",
-    "GBPCAD": "GBPCAD=X", "GBPCHF": "GBPCHF=X", "GBPNZD": "GBPNZD=X",
-    "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X", "EURAUD": "EURAUD=X",
-    "EURCAD": "EURCAD=X", "EURCHF": "EURCHF=X",
-    # Crypto
-    "BTCUSD": "BTC-USD",  "ETHUSD": "ETH-USD",  "SOLUSD": "SOL-USD",
-    "BNBUSD": "BNB-USD",  "XRPUSD": "XRP-USD",
-    # Commodities
-    "XAUUSD": "GC=F",     "XAGUSD": "SI=F",
-    # Indices
-    "US30":   "^DJI",     "NAS100": "^NDX",     "SPX500": "^GSPC"
+    "EURUSD": "forex", "GBPUSD": "forex", "USDJPY": "forex",
+    "USDCAD": "forex", "AUDUSD": "forex", "NZDUSD": "forex",
+    "USDCHF": "forex", "GBPJPY": "forex", "GBPAUD": "forex",
+    "GBPCAD": "forex", "GBPCHF": "forex", "GBPNZD": "forex",
+    "EURGBP": "forex", "EURJPY": "forex", "EURAUD": "forex",
+    "EURCAD": "forex", "EURCHF": "forex",
+    # Crypto (Binance symbolen)
+    "BTCUSD": "crypto", "ETHUSD": "crypto", "SOLUSD": "crypto",
+    "BNBUSD": "crypto", "XRPUSD": "crypto",
+    # Commodities & Indices via yfinance als fallback
+    "XAUUSD": "commodity", "XAGUSD": "commodity",
+    "US30":   "index",     "NAS100": "index", "SPX500": "index"
 }
+
+# Binance symbolen mapping
+BINANCE_SYMBOLS = {
+    "BTCUSD": "BTCUSDT", "ETHUSD": "ETHUSDT", "SOLUSD": "SOLUSDT",
+    "BNBUSD": "BNBUSDT", "XRPUSD": "XRPUSDT"
+}
+
+# Yahoo Finance fallback
+YAHOO_SYMBOLS = {
+    "XAUUSD": "GC=F", "XAGUSD": "SI=F",
+    "US30": "^DJI", "NAS100": "^NDX", "SPX500": "^GSPC"
+}
+
+# ================================================================
+# DATA FETCH — MULTI SOURCE
+# ================================================================
+def fetch_data(pair: str) -> pd.DataFrame:
+    """Haalt data op via beste beschikbare bron"""
+    pair_type = PAIRS.get(pair, "forex")
+    
+    # CRYPTO → Binance API (werkt altijd, ook op cloud)
+    if pair_type == "crypto":
+        return fetch_binance(pair)
+    
+    # FOREX → Frankfurter API (gratis, geen key)
+    elif pair_type == "forex":
+        df = fetch_forex_free(pair)
+        if df is not None and len(df) >= 50:
+            return df
+        # Fallback naar yfinance
+        return fetch_yfinance(pair + "=X")
+    
+    # COMMODITIES & INDICES → yfinance
+    else:
+        symbol = YAHOO_SYMBOLS.get(pair, pair)
+        return fetch_yfinance(symbol)
+
+def fetch_binance(pair: str) -> pd.DataFrame:
+    """Haalt crypto data op via Binance API — altijd gratis"""
+    try:
+        symbol   = BINANCE_SYMBOLS.get(pair, pair + "USDT")
+        url      = f"https://api.binance.com/api/v3/klines"
+        params   = {"symbol": symbol, "interval": "4h", "limit": 500}
+        resp     = requests.get(url, params=params, timeout=10)
+        data     = resp.json()
+        
+        if not data or isinstance(data, dict):
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(data, columns=[
+            'timestamp','Open','High','Low','Close','Volume',
+            'close_time','quote_vol','trades','taker_buy_base',
+            'taker_buy_quote','ignore'
+        ])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        for col in ['Open','High','Low','Close','Volume']:
+            df[col] = df[col].astype(float)
+        return df
+    except Exception as e:
+        print(f"Binance fout {pair}: {e}")
+        return pd.DataFrame()
+
+def fetch_forex_free(pair: str) -> pd.DataFrame:
+    """Haalt forex data op via gratis API"""
+    try:
+        # Gebruik yfinance met kortere periode als eerste poging
+        base   = pair[:3]
+        quote  = pair[3:]
+        symbol = f"{base}{quote}=X"
+        ticker = yf.Ticker(symbol)
+        df     = ticker.history(period="3mo", interval="4h")
+        if len(df) >= 50:
+            return df
+        return None
+    except:
+        return None
+
+def fetch_yfinance(symbol: str) -> pd.DataFrame:
+    """Yahoo Finance fallback"""
+    try:
+        ticker = yf.Ticker(symbol)
+        df     = ticker.history(period="6mo", interval="4h")
+        return df
+    except:
+        return pd.DataFrame()
 
 # ================================================================
 # DATABASE SETUP
@@ -792,14 +877,13 @@ async def send_daily_briefing(bot: Bot):
         briefing_pairs = ["EURUSD", "XAUUSD", "BTCUSD", "GBPUSD", "US30"]
         pair_summary   = []
         
-        for pair in briefing_pairs:
+        for pair in ["EURUSD", "XAUUSD", "BTCUSD", "GBPUSD", "US30"]:
             try:
-                ticker = yf.Ticker(PAIRS[pair])
-                hist   = ticker.history(period="5d", interval="1d")
-                if len(hist) >= 2:
-                    change     = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) /
-                                  hist['Close'].iloc[-2] * 100)
-                    direction  = "🟢" if change >= 0 else "🔴"
+                df = fetch_data(pair)
+                if df is not None and len(df) >= 2:
+                    change    = ((df['Close'].iloc[-1] - df['Close'].iloc[-2]) /
+                                  df['Close'].iloc[-2] * 100)
+                    direction = "🟢" if change >= 0 else "🔴"
                     pair_summary.append(f"{direction} {pair}: {change:+.2f}%")
             except:
                 pass
@@ -858,9 +942,8 @@ async def cmd_analyse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔍 Analyseer {pair}...")
     
     try:
-        ticker = yf.Ticker(PAIRS[pair])
-        df     = ticker.history(period="6mo", interval="4h")
-        if len(df) < 50:
+        df = fetch_data(pair)
+        if df is None or len(df) < 50:
             await update.message.reply_text(f"❌ Niet genoeg data voor {pair}")
             return
         
@@ -955,11 +1038,10 @@ async def scan_zones(bot: Bot):
     """FASE 1 — Elke 4 uur: detecteer zones op H4/D1"""
     print(f"🔍 FASE 1 — Zone scan op H4/D1 [{datetime.now().strftime('%H:%M')}]")
     
-    for pair, ticker_symbol in PAIRS.items():
+    for pair in list(PAIRS.keys()):
         try:
-            ticker = yf.Ticker(ticker_symbol)
-            df     = ticker.history(period="6mo", interval="4h")
-            if len(df) < 50:
+            df = fetch_data(pair)
+            if df is None or len(df) < 50:
                 continue
             
             ta       = TechnicalAnalysis(pair, df)
@@ -1006,10 +1088,31 @@ async def scan_entries(bot: Bot, min_score: int = 8):
     
     for pair, zone_data in list(active_zones.items()):
         try:
-            # Haal H1 data op voor entry confirmatie
-            ticker  = yf.Ticker(PAIRS[pair])
-            df_h1   = ticker.history(period="1mo",  interval="1h")
-            df_m15  = ticker.history(period="5d",   interval="15m")
+            # Haal H1 en M15 data op via beste bron
+            pair_type = PAIRS.get(pair, "forex")
+            if pair_type == "crypto":
+                symbol_h1  = BINANCE_SYMBOLS.get(pair, pair + "USDT")
+                resp_h1    = requests.get("https://api.binance.com/api/v3/klines",
+                             params={"symbol": symbol_h1, "interval": "1h", "limit": 200}, timeout=10)
+                resp_m15   = requests.get("https://api.binance.com/api/v3/klines",
+                             params={"symbol": symbol_h1, "interval": "15m", "limit": 200}, timeout=10)
+                
+                def binance_to_df(data):
+                    df = pd.DataFrame(data, columns=['timestamp','Open','High','Low','Close','Volume',
+                                     'close_time','quote_vol','trades','taker_buy_base','taker_buy_quote','ignore'])
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                    df.set_index('timestamp', inplace=True)
+                    for col in ['Open','High','Low','Close','Volume']:
+                        df[col] = df[col].astype(float)
+                    return df
+                
+                df_h1  = binance_to_df(resp_h1.json())
+                df_m15 = binance_to_df(resp_m15.json())
+            else:
+                symbol = (pair[:3] + pair[3:] + "=X") if pair_type == "forex" else YAHOO_SYMBOLS.get(pair, pair)
+                ticker  = yf.Ticker(symbol)
+                df_h1   = ticker.history(period="1mo", interval="1h")
+                df_m15  = ticker.history(period="5d",  interval="15m")
             
             if len(df_h1) < 20 or len(df_m15) < 20:
                 continue
@@ -1144,11 +1247,10 @@ async def cmd_best(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     results = []
     
-    for pair, ticker_symbol in PAIRS.items():
+    for pair in list(PAIRS.keys()):
         try:
-            ticker = yf.Ticker(ticker_symbol)
-            df     = ticker.history(period="6mo", interval="4h")
-            if len(df) < 50:
+            df = fetch_data(pair)
+            if df is None or len(df) < 50:
                 continue
             ta       = TechnicalAnalysis(pair, df)
             analysis = ta.full_analysis()
@@ -1182,9 +1284,8 @@ async def cmd_best(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Stuur automatisch chart van de beste
     best_pair, best_dir, best_score, best_analysis = top5[0]
     direction = "BUY" if "BUY" in best_dir else "SELL"
-    ticker = yf.Ticker(PAIRS[best_pair])
-    df     = ticker.history(period="6mo", interval="4h")
-    chart  = generate_chart(best_pair, df, best_analysis, direction)
+    df    = fetch_data(best_pair)
+    chart = generate_chart(best_pair, df, best_analysis, direction)
     with open(chart, 'rb') as f:
         await update.message.reply_photo(
             photo=f,
