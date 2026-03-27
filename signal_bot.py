@@ -38,9 +38,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 # ================================================================
 # CONFIGURATIE — VUL DIT IN
 # ================================================================
-TELEGRAM_TOKEN   = "JOUW_BOT_TOKEN_HIER"
-TELEGRAM_CHAT_ID = "JOUW_CHAT_ID_HIER"
-NEWS_API_KEY     = "JOUW_NEWSAPI_KEY_HIER"
+TELEGRAM_TOKEN   = "8279417890:AAGyx2PI8wJlmvHy6SiVky2jSw14E9XiwE0"
+TELEGRAM_CHAT_ID = "5821649428"
+NEWS_API_KEY     = "1c9882779b344175bf8776ed76d16ef1"
 TWELVE_DATA_KEY  = "246fb77f58cc4952af953a8de63cb449"
 
 # ================================================================
